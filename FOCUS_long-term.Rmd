@@ -1,0 +1,630 @@
+---
+title: "FOCUS_long-term"
+author: "Joseph Levine"
+date created: "2021-12-21"
+date edited: "2021-12-21"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(stringr)
+library(ggplot2)
+library(ggthemes)
+library(tidyverse)
+library(haven)
+library(devtools)
+library(dplyr)
+library(plyr)
+
+knitr::opts_knit$set(root.dir = "/Users/jable/Dropbox/Research/Forecasting/FOCUS/data")
+
+#setwd("/Users/jable/Dropbox/Research/Forecasting/FOCUS/data")
+
+options(scipen = 999)
+```
+
+## Purpose
+
+This file will analyze data from the IARPA FOCUS project. This analysis addresses the question: how does forecasting accuracy change as the length of the forecasting period increases? 
+
+Here are some functions I will need:
+
+```{r import FOCUS functions}
+calc.sqrt.WRPS <- function(ests.in, actual.in){
+  cumulative.ests <- vector()
+  cumulative.actual <- vector()
+  
+  for(i in 1:length(ests.in)){
+    cumulative.ests[i] <- sum(ests.in[1:i])
+    cumulative.actual[i] <- sum(actual.in[1:i])
+  }
+  
+  rps <- (1/(length(ests.in)-1))*sum((cumulative.actual-cumulative.ests)^2)
+  
+  multipliers_df <- data.frame(
+    numBins=c(2:10),
+    multipliers=c(1,1.482,1.976,2.515,2.964,3.458,3.952,4.368,4.882))
+  
+  mult=subset(multipliers_df,numBins==length(ests.in),select=multipliers)
+  
+  out=round(sqrt(as.numeric(rps*mult)),3)
+  
+  return(out)
+}
+
+calc.sqrt.brier <- function(ests.in, actual.in){
+  rps <- (1/(length(ests.in)))*sum((ests.in-actual.in)^2)
+  
+  multipliers_df <- data.frame(
+    numBins=c(2:10),
+    multipliers=c(1, 1.52, 2.22, 3.13, 4.20, 5.46, 6.88, 8.44, 10.2))
+  
+  mult=subset(multipliers_df, numBins==length(ests.in), select=multipliers)
+  
+  out=round(sqrt(as.numeric(rps*mult)),3)
+  
+  return(out)
+}
+
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+# check this more closely 
+
+odds = function(x) {
+  x / (1 - x)
+}
+
+prob = function(x) {
+  x / (1 + x)
+}
+
+```
+
+
+## Civilization V
+
+The FOCUS program used six different games. The first we will analyze is Civilization V.
+
+```{r civ5_data}
+pslist <- list()
+
+for(ps in 1:5) {
+  filename <- paste0("Study 1/Civ5/Problem Set ", ps, "/ProblemSet", ps,"_ParticipantData.csv")
+  psdata <- read.csv(filename)
+  pslist[[ps]] <- psdata
+}
+
+all_ps = do.call(rbind, pslist) # all Civ5 problem sets in one 
+
+# load question data (how many rounds between each question? how far in the future are we forecasting?)
+# will have to manually label the years for each problem. and interpret the counterfacutal names because they are NOT well named.
+
+forecast_period <- read.csv("Study 1/Civ5/Civ5_questions_extended.csv") # this is a hand-coded dataset which i made from the problem sets on 2021-12-22
+
+questions_responses <- join(all_ps, forecast_period, by = c("counterfactual", "problem")) # gets the data from the forecast_period and questions files. merges question to forecast. merge on "counterfactual" (string) and "problem" (int). Should encode counterfactual... but i got the punctuation right
+
+questions_responses$forecast_vector <- strsplit(questions_responses$forecast,split=";")
+for (i in 1:nrow(questions_responses)) {
+  questions_responses$forecast_vector[[i]] <- as.numeric(questions_responses$forecast_vector[[i]]) 
+}
+
+questions_responses$groundtruth_vector <- strsplit(questions_responses$ground_truth,split=";")
+for (i in 1:nrow(questions_responses)) {
+  questions_responses$groundtruth_vector[[i]] <- as.numeric(questions_responses$groundtruth_vector[[i]])
+}
+
+
+```
+
+
+
+
+``` {r replicate}
+keeps <- c("team","problem_set", "problem","counterfactual","forecast_period","forecast_vector", "groundtruth_vector", "topic")
+scoring <- questions_responses[keeps]
+
+
+for (i in 1:length(scoring$groundtruth_vector)) {
+  scoring$swrps_scores[[i]] <- calc.sqrt.WRPS(scoring$forecast_vector[[i]], scoring$groundtruth_vector[[i]]) 
+  scoring$bins[[i]] <- length(scoring$forecast_vector[[i]])
+}
+
+for (i in 1:length(scoring$groundtruth_vector)) {
+  scoring$brier_scores[[i]] <- calc.sqrt.brier(scoring$forecast_vector[[i]], scoring$groundtruth_vector[[i]]) 
+}
+
+#The scores calculated above do coordinate to what the FOCUS team included in their data files.
+
+p <- ggplot(scoring, aes(x=forecast_period)) 
+
+p + geom_histogram(binwidth=20) + theme_stata() + 
+  xlab("Forecast Range") + ylab("Number of Questions")  +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Range of Questions") 
+ggsave("results/civ5_periods.png", width = 10, height = 6)
+
+
+
+```
+
+
+```{r aggregate}
+
+scoring$forecast_prob <- scoring$forecast_vector
+
+scoring <-  unnest_wider(scoring,forecast_vector)
+
+colnames(scoring) <- c("team", "problem_set", "problem", "counterfactual", "forecast_period", "bin1", "bin2", "bin3", "bin4", "bin5", "bin6", "bin7", "bin8", "bin9", "bin10", "groundtruth_prob", "topic", "swrps_scores",  "bins", "brier_scores", "forecast_prob")
+
+scoring[, 6:15][scoring[,6:15] == 1] <- .9999 #These fuckers are too confident and infinity breaks my code
+
+for (i in 1:10) {
+  scoring[[paste0('bin',i,'odds')]] <- odds(scoring[[paste0('bin',i)]])
+}
+
+scoring$cf_question <- paste0(scoring$counterfactual,scoring$problem)
+all_qs <- c(unique(scoring$cf_question))
+
+civ5_scores <- data.frame(matrix(ncol=18,nrow=0))
+
+colnames(civ5_scores) <- c("problem_set"    ,  "problem"    ,      "counterfactual"  , "forecast_period" , "groundtruth_prob", "topic", "bins"      ,       "cf_question"   ,   "ag_mean_1"   ,"ag_mean_2" ,       "ag_mean_3"   ,     "ag_mean_4" , "ag_mean_5"   ,"ag_mean_6" ,       "ag_mean_7"   ,     "ag_mean_8" ,   "ag_mean_9"   ,     "ag_mean_10" )
+
+for (i in all_qs) {
+  x <- subset(scoring, cf_question == i) # going question by question in this loop 
+  v <- 31-(10-x$bins[[1]]) # total number of columns minus max number of bins minus actual number of bins 
+  for (j in 22:v) {         # the columns with odds in them 
+    u <- j-21               # starting with the first column which has odds
+    x[[paste0("bin",u,"odds")]][ x[[paste0("bin",u,"odds")]] == 0] <- NA # this is a cop out because they're not really zeros, just zero odds which get ignored by the gemoetric mean function. 
+    x[[paste0("ag_mean_",u)]] <- exp(mean(log(x[[paste0("bin",u,"odds")]]),na.rm=TRUE))     # calculate the geometric mean of odds for each question across competitors
+  }
+  v <- 32+x$bins[[1]]
+  y <- x[c(2:5,16,17,19,32:v)] %>% unique()
+  civ5_scores <- rbind.fill(civ5_scores,y)
+}
+civ5_scores <- civ5_scores  %>% mutate_at(vars(9:18), ~replace(., is.nan(.),0))
+
+for (i in 1:10) {
+  civ5_scores[[paste0('bin',i,'prob')]] <- prob(civ5_scores[[paste0('ag_mean_',i)]])
+}
+
+probs <- c('bin1prob','bin2prob','bin3prob','bin4prob','bin5prob','bin6prob','bin7prob','bin8prob','bin9prob','bin10prob')
+civ5_scores$all_bins <- invisible(apply(civ5_scores[ , probs] , 1 ,paste0, collapse = ", "))
+
+
+civ5_scores$all_bins <- strsplit(civ5_scores$all_bins,split=",")
+for (i in 1:nrow(civ5_scores)) {
+  civ5_scores$all_bins[[i]] <- as.numeric(civ5_scores$all_bins[[i]])
+  civ5_scores$all_bins[[i]] <- civ5_scores$all_bins[[i]][!is.na(civ5_scores$all_bins[[i]])]
+}
+
+for (i in 1:nrow(civ5_scores)) {
+  civ5_scores$swrps_scores[[i]] <- calc.sqrt.WRPS(civ5_scores$all_bins[[i]], civ5_scores$groundtruth_prob[[i]]) 
+}
+
+civ5_scores$forecast_period <- unlist(civ5_scores$forecast_period)
+civ5_scores$swrps_scores <- unlist(civ5_scores$swrps_scores)
+
+p <- ggplot(civ5_scores, aes(forecast_period, swrps_scores))
+
+p + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Accuracy and Period Length") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_score_period.png", width = 10, height = 6)
+
+lmodel <- lm(swrps_scores ~ forecast_period, data = civ5_scores)
+summary(lmodel)
+
+
+```
+
+
+```{r naive calibration}
+
+scoring <-  unnest_wider(scoring,groundtruth_prob)
+
+colnames(scoring) <- c("team", "problem_set", "problem", "counterfactual", "forecast_period", "fcast_bin1", "fcast_bin2", "fcast_bin3", "fcast_bin4", "fcast_bin5", "fcast_bin6", "fcast_bin7", "fcast_bin8", "fcast_bin9", "fcast_bin10", "truth_bin1", "truth_bin2", "truth_bin3", "truth_bin4", "truth_bin5", "truth_bin6", "truth_bin7", "truth_bin8", "truth_bin9", "truth_bin10",  "topic", "swrps_scores",  "bins", "brier_scores", "forecast_prob",'bin1prob','bin2prob','bin3prob','bin4prob','bin5prob','bin6prob','bin7prob','bin8prob','bin9prob','bin10prob',"cf_name")
+scoring$ID <- seq.int(nrow(scoring))
+scoring <- as.data.frame(scoring)
+
+calibration <- reshape(scoring, idvar="ID", direction="long", varying = list(fcast=c(6:15),truth=c(16:25)), v.names=c( "fcast", "truth"))
+
+#detach(package:plyr)
+keeps <- c("forecast_period", "cf_name", "fcast", "truth")
+calibration <- calibration[keeps] %>% as.data.frame() %>% drop_na(truth)
+calibration <- calibration  %>% mutate_at(vars(3), ~replace(., is.nan(.),NA)) # some of the NAs snuck through
+
+calibration$fcast_dec <- (ceiling(calibration$fcast*10)/10) - .05
+calibration$truth_dec <- (ceiling(calibration$truth*10)/10) - .05
+
+library(plyr)
+calibration$period_cent <- round_any(calibration$forecast_period, 100, f = ceiling)
+
+detach(package:plyr)
+calibration <- calibration %>% group_by(fcast_dec,period_cent) %>% 
+  summarize(truth = mean(truth, na.rm=T),
+            n = n())
+
+q <- ggplot(calibration, aes(x=fcast_dec, y=truth, color = factor(period_cent), group = factor(period_cent)))
+
+q + geom_point() + theme_stata() + 
+  xlab("Predicted Frequency") + ylab("Realized Frequency") + ylim(0,1) + xlim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  labs(title="Civ5 Calibration",
+       subtitle="By Forecast Range") +
+  scale_color_manual(labels = c("\u2264 100 turns", "101 to 200 turns", "201 to 300 turns", "\u2265 300 turns"), values = c("blue", "red", "black", "green")) + theme(legend.title=element_blank()) +
+  geom_path() +
+  geom_abline(slope=1)
+ggsave("results/civ5_calib_range.png", width = 10, height = 6)
+
+categories <- calibration %>% group_by(period_cent) %>% 
+  summarize(sum = sum(n, na.rm=T)) 
+# in total 3,383 forecasts. 
+categories$prop <- categories$sum/3383
+
+
+```
+
+
+```{r by forecast topic}
+#checking if it's easier to make e.g., demographic forecasts than technological forecasts
+q <- ggplot(civ5_scores, aes(x=forecast_period, y=swrps_scores, color=topic))
+
+q + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  labs(title="Civ5 Forecast Accuracy and Period Length",
+       subtitle="By Forecast Topic") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_score_period_topic.png", width = 10, height = 6)
+
+civ5_scores$problem_set <- as.character(civ5_scores$problem_set)
+
+```
+
+```{r by problem set}
+# checking if some problem sets were harder than others
+r <- ggplot(civ5_scores, aes(x=forecast_period, y=swrps_scores, color=factor(problem_set), group=factor(problem_set)))
+
+r + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  labs(title="Civ5 Forecast Accuracy and Period Length",
+       subtitle="By Problem Set") +
+  scale_color_manual(labels = c("PS1", "PS2", "PS3", "PS4", "PS5"), values = c("blue", "red", "black", "green", "purple")) + theme(legend.title=element_blank()) +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_score_period_ps.png", width = 10, height = 6)
+
+
+
+```
+
+
+The following chunk just calculates the mean of the individual scores. I'm not sure what information that gives me. 
+```{r}
+
+cols <- c('counterfactual', 'problem', 'forecast_period')
+
+scoring %>%  group_by(across(all_of(cols))) %>% group_map()
+
+
+scoring$forecast_period <- unlist(scoring$forecast_period)
+scoring$swrps_scores <- unlist(scoring$swrps_scores)
+scoring$problem <- unlist(scoring$problem)
+scoring$problem_set <- unlist(scoring$problem_set)
+scoring$counterfactual <- unlist(scoring$counterfactual)
+
+# At this point, we have to aggregate the scores. It's more proper to aggregate the probabilities than the scores but I think the OOO works out the same? Should check this. 
+
+res.by <- by(scoring$swrps_scores, list(scoring$counterfactual, scoring$problem, scoring$forecast_period), gm_mean)
+
+civ5_gmeans <- as.data.frame(res.by) %>% na.omit()
+
+colnames(civ5_gmeans) <- c("counterfactual", "problem", "forecast_period", "mean_swrps")
+
+p <- ggplot(scoring, aes(forecast_period,swrps_scores))
+
+p + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Accuracy and Period Length") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_score_period_allfcasts.png", width = 10, height = 6)
+
+lmodel <- lm(swrps_scores ~ forecast_period, data = scoring)
+summary(lmodel)
+
+```
+
+
+## Critter World
+
+
+```{r Critter_world}
+pslist <- list()
+
+for(ps in 1:2) {
+  filename <- paste0("Study 1/Critter World/Problem Set ", ps, "/ProblemSet", ps,"_ParticipantData_rec.csv")
+  psdata <- read.csv(filename)
+  pslist[[ps]] <- psdata
+}
+
+for(ps in 1:2) {
+  filename <- paste0("Study 2/Critter World/Problem Set ", ps, "/ProblemSet", ps,"_ParticipantData_rec.csv")
+  psdata <- read.csv(filename)
+  ps <- ps + 2
+  pslist[[ps]] <- psdata
+}
+
+pslist[[5]] <- read.csv("Study 3/Critter World/CritterWorld_Study3_Participant_data_rec.csv")
+
+all_ps_cw = do.call(rbind, pslist) 
+
+
+forecast_period_cw <- read.csv("Study 1/Critter World/cw_questions_extended.csv") # this is a hand-coded dataset which i made from the problem sets on 2021-12-27. CONTAINS ALL THREE StUDIES
+
+questions_responses_cw <- join(all_ps_cw, forecast_period_cw, by = c("counterfactual", "question")) # gets the data from the forecast_period and questions files. merges question to forecast. merge on "counterfactual" (string) and "problem" (int). Should encode counterfactual... but i got the punctuation right
+
+questions_responses_cw$forecast_vector <- strsplit(questions_responses_cw$forecast,split=";")
+for (i in 1:nrow(questions_responses_cw)) {
+  questions_responses_cw$forecast_vector[[i]] <- as.numeric(questions_responses_cw$forecast_vector[[i]]) 
+}
+
+questions_responses_cw$groundtruth_vector <- strsplit(questions_responses_cw$ground_truth,split=";")
+for (i in 1:nrow(questions_responses_cw)) {
+  questions_responses_cw$groundtruth_vector[[i]] <- as.numeric(questions_responses_cw$groundtruth_vector[[i]])
+}
+
+
+```
+
+
+```{r aggregate}
+
+keeps <- c("counterfactual", "question","forecast_period","forecast_vector", "groundtruth_vector")
+scoring_cw <- questions_responses_cw[keeps]
+
+scoring_cw$forecast_prob <- scoring_cw$forecast_vector
+
+for (i in 1:length(scoring_cw$question)) {
+  scoring_cw$bins[[i]] <- length(scoring_cw$forecast_vector[[i]])
+}
+
+scoring_cw <-  unnest_wider(scoring_cw,forecast_vector)
+
+colnames(scoring_cw) <- c("counterfactual", "problem", "forecast_period", "bin1", "bin2", "bin3", "bin4", "bin5", "bin6", "bin7", "bin8", "bin9", "bin10",  "groundtruth_prob", "forecast_prob",  "bins")
+
+scoring_cw[, 4:13][scoring_cw[,4:13] == 1] <- .9999 #These fuckers are too confident and infinity breaks my code
+
+
+for (i in 1:10) {
+  scoring_cw[[paste0('bin',i,'odds')]] <- odds(scoring_cw[[paste0('bin',i)]])
+}
+
+scoring_cw$cf_question <- paste0(scoring_cw$counterfactual,scoring_cw$problem)
+all_qs <- c(unique(scoring_cw$cf_question))
+
+cw_means <- data.frame(matrix(ncol=16,nrow=0))
+
+colnames(cw_means) <- c(  "problem"    ,      "counterfactual"  , "forecast_period" , "groundtruth_prob", "bins"      ,       "cf_question"   ,   "ag_mean_1"   ,"ag_mean_2" ,       "ag_mean_3"   ,     "ag_mean_4" , "ag_mean_5"   ,"ag_mean_6" ,       "ag_mean_7"   ,     "ag_mean_8", "ag_mean_9", "ag_mean_10"   )
+
+for (i in all_qs) {
+  x <- subset(scoring_cw, cf_question == i) # going question by question in this loop 
+  v <- 27-(11-x$bins[[1]]) # total number of columns minus max number of bins minus actual number of bins 
+  for (j in 17:v) { # the columns with odds in them 
+    u <- j-16       # starting with the first column which as odds
+    x[[paste0("bin",u,"odds")]][ x[[paste0("bin",u,"odds")]] == 0] <- NA # this is a cop out because they're not really zeros, just zero odds which get ignored by the gemoetric mean function. 
+    x[[paste0("ag_mean_",u)]] <- exp(mean(log(x[[paste0("bin",u,"odds")]]),na.rm=TRUE)) # This calculates the geometric mean of the odds
+  }
+  v <- 28+x$bins[[1]]-1 #starting at the new mean columns
+  y <- x[c(1:3,14,16,27:v)] %>% group_by(counterfactual, problem)  %>% slice(1) # JABL
+  cw_means <- rbind.fill(cw_means,y)
+}
+cw_means <- cw_means  %>% mutate_at(vars(7:16), ~replace(., is.nan(.),0))
+
+for (i in 1:10) {
+  cw_means[[paste0('bin',i,'prob')]] <- prob(cw_means[[paste0('ag_mean_',i)]])
+}
+
+probs <- c('bin1prob','bin2prob','bin3prob','bin4prob','bin5prob','bin6prob','bin7prob','bin8prob','bin9prob','bin10prob')
+cw_means$all_bins <- invisible(apply(cw_means[ , probs] , 1 ,paste0, collapse = ", "))
+
+
+cw_means$all_bins <- strsplit(cw_means$all_bins,split=",")
+for (i in 1:nrow(cw_means)) {
+  cw_means$all_bins[[i]] <- as.numeric(cw_means$all_bins[[i]])
+  cw_means$all_bins[[i]] <- cw_means$all_bins[[i]][!is.na(cw_means$all_bins[[i]])]
+}
+
+for (i in 1:nrow(cw_means)) {
+  cw_means$swrps_scores[[i]] <- calc.sqrt.WRPS(cw_means$all_bins[[i]], cw_means$groundtruth_prob[[i]]) 
+}
+
+cw_means$forecast_period <- unlist(cw_means$forecast_period)
+cw_means$swrps_scores <- unlist(cw_means$swrps_scores)
+
+p <- ggplot(cw_means, aes(forecast_period, swrps_scores))
+
+p+ geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  labs(title="Critter World Forecast Accuracy and Period Length",
+       subtitle="With Outlier") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/cw_score_period_with_outlier.png", width = 10, height = 6)
+
+lmodel <- lm(swrps_scores ~ forecast_period, data = cw_means)
+summary(lmodel)
+
+cw_means <- cw_means[-12] # removing a single outlier (580 turns)
+
+p <- ggplot(cw_means, aes(forecast_period, swrps_scores))
+
+p+ geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  labs(title="Critter World Forecast Accuracy and Period Length",
+       subtitle="Without Outlier") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/cw_score_period_without_outlier.png", width = 10, height = 6)
+
+lmodel <- lm(swrps_scores ~ forecast_period, data = cw_means)
+summary(lmodel)
+
+
+```
+
+
+
+
+## FLuTE
+
+
+```{r FLuTE}
+
+all_ps_flute <- read.csv("Study 1/Flute/Problem Set/ProblemSet_ParticipantData.csv")
+
+forecast_period_flute <- read.csv("Study 1/Flute/flute_questions_extended.csv") # this is a hand-coded dataset which i made from the problem sets on 2021-12-22
+
+questions_responses_flute <- join(all_ps_flute, forecast_period_flute, by = c("counterfactual", "problem")) # gets the data from the forecast_period and questions files. merges question to forecast. merge on "counterfactual" (string) and "problem" (int). Should encode counterfactual... but i got the punctuation right
+
+questions_responses_flute$forecast_vector <- strsplit(questions_responses_flute$forecast,split=";")
+for (i in 1:nrow(questions_responses_flute)) {
+  questions_responses_flute$forecast_vector[[i]] <- as.numeric(questions_responses_flute$forecast_vector[[i]]) 
+}
+
+questions_responses_flute$groundtruth_vector <- strsplit(questions_responses_flute$ground_truth,split=";")
+for (i in 1:nrow(questions_responses_flute)) {
+  questions_responses_flute$groundtruth_vector[[i]] <- as.numeric(questions_responses_flute$groundtruth_vector[[i]])
+}
+
+
+```
+
+
+```{r aggregate}
+
+keeps <- c("counterfactual", "problem","forecast_period","forecast_vector", "groundtruth_vector")
+scoring_flute <- questions_responses_flute[keeps]
+
+scoring_flute$forecast_prob <- scoring_flute$forecast_vector
+
+for (i in 1:length(scoring_flute$problem)) {
+  scoring_flute$bins[[i]] <- length(scoring_flute$forecast_vector[[i]])
+}
+
+scoring_flute <-  unnest_wider(scoring_flute,forecast_vector)
+
+colnames(scoring_flute) <- c("counterfactual", "problem", "forecast_period", "bin1", "bin2", "bin3", "bin4", "bin5",   "groundtruth_prob", "forecast_prob",  "bins")
+
+scoring_flute[, 4:8][scoring_flute[,4:8] == 1] <- .9999 #These fuckers are too confident and infinity breaks my code
+
+
+for (i in 1:5) {
+  scoring_flute[[paste0('bin',i,'odds')]] <- odds(scoring_flute[[paste0('bin',i)]])
+}
+
+scoring_flute$cf_question <- paste0(scoring_flute$counterfactual,scoring_flute$problem)
+all_qs <- c(unique(scoring_flute$cf_question))
+#all_qs <- all_qs[-12] # removing a single outlier (580 turns)
+
+flute_means <- data.frame(matrix(ncol=11,nrow=0))
+
+colnames(flute_means) <- c(  "problem"    ,      "counterfactual"  , "forecast_period" , "groundtruth_prob", "bins"      ,       "cf_question"   ,   "ag_mean_1"   ,"ag_mean_2" ,       "ag_mean_3"   ,     "ag_mean_4" , "ag_mean_5")
+
+for (i in all_qs) {
+  x <- subset(scoring_flute, cf_question == i) # going question by question in this loop 
+  v <- 17-(6-x$bins[[1]]) # total number of columns minus max number of bins minus actual number of bins 
+  for (j in 12:v) { # the columns with odds in them 
+    u <- j-11       # starting with the first column which as odds
+    x[[paste0("bin",u,"odds")]][ x[[paste0("bin",u,"odds")]] == 0] <- NA # this is a cop out because they're not really zeros, just zero odds which get ignored by the gemoetric mean function. 
+    x[[paste0("ag_mean_",u)]] <- exp(mean(log(x[[paste0("bin",u,"odds")]]),na.rm=TRUE)) # This calculates the geometric mean of the odds
+  }
+  v <- 18+x$bins[[1]]-1 #starting at the new mean columns
+  y <- x[c(1:3,9,11,17:v)] %>% group_by(counterfactual, problem)  %>% slice(1) # JABL
+  flute_means <- rbind.fill(flute_means,y)
+}
+
+for (i in 1:5) {
+  flute_means[[paste0('bin',i,'prob')]] <- prob(flute_means[[paste0('ag_mean_',i)]])
+}
+
+probs <- c('bin1prob','bin2prob','bin3prob','bin4prob','bin5prob')
+flute_means$all_bins <- invisible(apply(flute_means[ , probs] , 1 ,paste0, collapse = ", "))
+
+
+flute_means$all_bins <- strsplit(flute_means$all_bins,split=",")
+for (i in 1:nrow(flute_means)) {
+  flute_means$all_bins[[i]] <- as.numeric(flute_means$all_bins[[i]])
+  flute_means$all_bins[[i]] <- flute_means$all_bins[[i]][!is.na(flute_means$all_bins[[i]])]
+}
+
+for (i in 1:nrow(flute_means)) {
+  flute_means$swrps_scores[[i]] <- calc.sqrt.WRPS(flute_means$all_bins[[i]], flute_means$groundtruth_prob[[i]]) 
+}
+
+flute_means$forecast_period <- unlist(flute_means$forecast_period)
+flute_means$swrps_scores <- unlist(flute_means$swrps_scores)
+
+p <- ggplot(flute_means, aes(forecast_period, swrps_scores))
+
+p <- p+ geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,2) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  labs(title="FLuTE Forecast Accuracy and Period Length") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/flute_score_period.png", width = 10, height = 6)
+
+lmodel <- lm(swrps_scores ~ forecast_period, data = flute_means)
+summary(lmodel)
+
+
+```
+
+
+
+## Pathwayz
+
+
+```{r pathwayz}
+all_ps_pathwayz <- read.csv("Study 3/Pathwayz/Pathwayz_Study3_Participant_data.csv")
+
+forecast_period_pathwayz <- read.csv("Study 3/Pathwayz/pathwayz_questions_extended.csv") # Almost all questions don't have a well defined end period
+
+questions_responses_flute <- join(all_ps_pathwayz, forecast_period_pathwayz, by = c("question")) 
+
+
+
+```
+
+
+
+
+
+
+## Stratego
+
+
+```{r stratego}
+
+pslist <- list()
+
+for(ps in 1:2) {
+  filename <- paste0("Study 2/Stratego/Problem Set ", ps, "/ProblemSet", ps,"_ParticipantData.csv")
+  psdata <- read.csv(filename)
+  pslist[[ps]] <- psdata
+}
+
+pslist[[3]] <- read.csv("Study 3/Stratego/Stratego_Study3_Participant_data.csv")
+
+all_ps_stratego = do.call(rbind, pslist) # This doesn't run because column names changed across studies. Will take ~1 hour to fix but 
+
+forecast_period_stratego <- read.csv("") # NEED TO THINK ABOUT THIS, lots of questions with no strict resolution period.
+
+questions_responses_stratego <- join(all_ps_stratego, forecast_period_stratego, by = c("counterfactual", "question")) # gets the data from the forecast_period and questions files. merges question to forecast. merge on "counterfactual" (string) and "problem" (int). Should encode counterfactual... but i got the punctuation right
+
+
+```
+

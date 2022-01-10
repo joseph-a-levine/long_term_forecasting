@@ -15,6 +15,7 @@ library(haven)
 library(devtools)
 library(dplyr)
 library(plyr)
+library(moments)
 
 knitr::opts_knit$set(root.dir = "/Users/jable/Dropbox/Research/Forecasting/FOCUS/data")
 
@@ -153,6 +154,16 @@ ggsave("results/civ5_periods.png", width = 10, height = 6)
 
 scoring$forecast_prob <- scoring$forecast_vector
 
+for (i in 1:nrow(scoring)) {
+  scoring$kurt[[i]] <- kurtosis(scoring$forecast_prob[[i]]) # a totally fake measure of overconfidence 
+  scoring$range[[i]] <- diff(range(scoring$forecast_prob[[i]]))
+}
+
+scoring$kurt <- unlist(scoring$kurt)
+scoring$range <- unlist(scoring$range)
+scoring$bins <- unlist(scoring$bins)
+scoring$forecast_period <- unlist(scoring$forecast_period)
+
 scoring <-  unnest_wider(scoring,forecast_vector)
 
 colnames(scoring) <- c("team", "problem_set", "problem", "counterfactual", "forecast_period", "bin1", "bin2", "bin3", "bin4", "bin5", "bin6", "bin7", "bin8", "bin9", "bin10", "groundtruth_prob", "topic", "swrps_scores",  "bins", "brier_scores", "forecast_prob")
@@ -217,6 +228,24 @@ ggsave("results/civ5_score_period.png", width = 10, height = 6)
 lmodel <- lm(swrps_scores ~ forecast_period, data = civ5_scores)
 summary(lmodel)
 
+s <- ggplot(scoring, aes(forecast_period, kurt))
+
+s + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Kurtosis") + ylim(0,10) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Kurtosis and Forecast Period Length") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_kurt_period.png", width = 10, height = 6)
+
+
+t <- ggplot(scoring, aes(forecast_period, range))
+
+t + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Range of forecast probabilities") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Range of Forecast Probabilities and Forecast Period Length") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_range_period.png", width = 10, height = 6)
 
 ```
 
@@ -476,7 +505,26 @@ summary(lmodel)
 
 ```
 
+```{r cw less than 100}
+cw_means <- cw_means[cw_means$forecast_period<100,] # removing all quesitons with over 100 turns
 
+p <- ggplot(cw_means, aes(forecast_period, swrps_scores))
+
+p+ geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  labs(title="Critter World Forecast Accuracy and Period Length",
+       subtitle="Questions with range \u2264 100") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/cw_score_period_ltoet_100.png", width = 10, height = 6)
+
+lmodel <- lm(swrps_scores ~ forecast_period, data = cw_means)
+summary(lmodel)
+
+
+
+
+```
 
 
 ## FLuTE

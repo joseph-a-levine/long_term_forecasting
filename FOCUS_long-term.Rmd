@@ -2,7 +2,7 @@
 title: "FOCUS_long-term"
 author: "Joseph Levine"
 date created: "2021-12-21"
-date edited: "2021-12-21"
+date edited: "2022-01-09"
 output: html_document
 ---
 
@@ -16,6 +16,8 @@ library(devtools)
 library(dplyr)
 library(plyr)
 library(moments)
+library(magick)
+
 
 knitr::opts_knit$set(root.dir = "/Users/jable/Dropbox/Research/Forecasting/FOCUS/data")
 
@@ -122,7 +124,7 @@ for (i in 1:nrow(questions_responses)) {
 
 
 ``` {r replicate}
-keeps <- c("team","problem_set", "problem","counterfactual","forecast_period","forecast_vector", "groundtruth_vector", "topic")
+keeps <- c("team", "performer", "problem_set", "problem","counterfactual","forecast_period","forecast_vector", "groundtruth_vector", "topic")
 scoring <- questions_responses[keeps]
 
 
@@ -140,10 +142,12 @@ for (i in 1:length(scoring$groundtruth_vector)) {
 p <- ggplot(scoring, aes(x=forecast_period)) 
 
 p + geom_histogram(binwidth=20) + theme_stata() + 
-  xlab("Forecast Range") + ylab("Number of Questions")  +
+  xlab("Forecast Range") + ylab("Number of Forecasts")  +
   theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
   ggtitle("Civ5 Forecast Range of Questions") 
 ggsave("results/civ5_periods.png", width = 10, height = 6)
+
+
 
 
 
@@ -154,19 +158,27 @@ ggsave("results/civ5_periods.png", width = 10, height = 6)
 
 scoring$forecast_prob <- scoring$forecast_vector
 
+scoring$individual <- paste(scoring$team, scoring$performer, sep = "_")
+
+scoring <- scoring %>% select(individual, everything()) # move concatenated column to the beginning to resolve indexing
+
+scoring <- subset(scoring, select=-c(team,performer))
+
 for (i in 1:nrow(scoring)) {
   scoring$kurt[[i]] <- kurtosis(scoring$forecast_prob[[i]]) # a totally fake measure of overconfidence 
-  scoring$range[[i]] <- diff(range(scoring$forecast_prob[[i]]))
+  scoring$skew[[i]] <- as.numeric(skewness(scoring$forecast_prob[[i]])) # a totally fake measure of overconfidence 
+  scoring$range[[i]] <- diff(range(scoring$forecast_prob[[i]])) # a somewhat fake measure of overconfidence 
 }
 
 scoring$kurt <- unlist(scoring$kurt)
+scoring$skew <- unlist(scoring$skew)
 scoring$range <- unlist(scoring$range)
 scoring$bins <- unlist(scoring$bins)
 scoring$forecast_period <- unlist(scoring$forecast_period)
 
 scoring <-  unnest_wider(scoring,forecast_vector)
 
-colnames(scoring) <- c("team", "problem_set", "problem", "counterfactual", "forecast_period", "bin1", "bin2", "bin3", "bin4", "bin5", "bin6", "bin7", "bin8", "bin9", "bin10", "groundtruth_prob", "topic", "swrps_scores",  "bins", "brier_scores", "forecast_prob")
+colnames(scoring) <- c("individual", "problem_set", "problem", "counterfactual", "forecast_period", "bin1", "bin2", "bin3", "bin4", "bin5", "bin6", "bin7", "bin8", "bin9", "bin10", "groundtruth_prob", "topic", "swrps_scores",  "bins", "brier_scores", "forecast_prob")
 
 scoring[, 6:15][scoring[,6:15] == 1] <- .9999 #These fuckers are too confident and infinity breaks my code
 
@@ -183,14 +195,14 @@ colnames(civ5_scores) <- c("problem_set"    ,  "problem"    ,      "counterfactu
 
 for (i in all_qs) {
   x <- subset(scoring, cf_question == i) # going question by question in this loop 
-  v <- 31-(10-x$bins[[1]]) # total number of columns minus max number of bins minus actual number of bins 
-  for (j in 22:v) {         # the columns with odds in them 
-    u <- j-21               # starting with the first column which has odds
+  v <- 35-(10-x$bins[[1]]) # total number of columns minus max number of bins minus actual number of bins 
+  for (j in 25:v) {         # the columns with odds in them 
+    u <- j-24               # starting with the first column which has odds
     x[[paste0("bin",u,"odds")]][ x[[paste0("bin",u,"odds")]] == 0] <- NA # this is a cop out because they're not really zeros, just zero odds which get ignored by the gemoetric mean function. 
     x[[paste0("ag_mean_",u)]] <- exp(mean(log(x[[paste0("bin",u,"odds")]]),na.rm=TRUE))     # calculate the geometric mean of odds for each question across competitors
   }
-  v <- 32+x$bins[[1]]
-  y <- x[c(2:5,16,17,19,32:v)] %>% unique()
+  v <- 35+x$bins[[1]]
+  y <- x[c(2:5,16,17,19,35:v)] %>% unique()
   civ5_scores <- rbind.fill(civ5_scores,y)
 }
 civ5_scores <- civ5_scores  %>% mutate_at(vars(9:18), ~replace(., is.nan(.),0))
@@ -216,9 +228,24 @@ for (i in 1:nrow(civ5_scores)) {
 civ5_scores$forecast_period <- unlist(civ5_scores$forecast_period)
 civ5_scores$swrps_scores <- unlist(civ5_scores$swrps_scores)
 
-p <- ggplot(civ5_scores, aes(forecast_period, swrps_scores))
+bins_range <- ggplot(civ5_scores, aes(forecast_period, bins)) # showing bins and range for each question
 
-p + geom_point() + theme_stata() + 
+bins_range + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Number of bins") + ylim(0,10) +
+  scale_y_continuous(breaks=seq(0,10,2)) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Accuracy and Number of Bins per Questions") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_bins_period.png", width = 10, height = 6)
+
+lmodel <- lm(bins ~ forecast_period, data = civ5_scores)
+summary(lmodel)
+
+
+
+accuracy_range <- ggplot(civ5_scores, aes(forecast_period, swrps_scores)) # Graph of the aggregated accuracy and forecast period length
+
+accuracy_range + geom_point() + theme_stata() + 
   xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
   theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
   ggtitle("Civ5 Forecast Accuracy and Period Length") +
@@ -228,12 +255,22 @@ ggsave("results/civ5_score_period.png", width = 10, height = 6)
 lmodel <- lm(swrps_scores ~ forecast_period, data = civ5_scores)
 summary(lmodel)
 
-s <- ggplot(scoring, aes(forecast_period, kurt))
+library(moments)
+kurtosis <- ggplot(scoring, aes(forecast_period, kurt))
 
-s + geom_point() + theme_stata() + 
+kurtosis + geom_point() + theme_stata() + 
   xlab("Number of Turns in Forecast Period") + ylab("Kurtosis") + ylim(0,10) +
   theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
   ggtitle("Kurtosis and Forecast Period Length") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_kurt_period.png", width = 10, height = 6)
+
+skewness <- ggplot(scoring, aes(forecast_period, skew))
+
+skewness + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Skewness") + ylim(-5,5) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Skewness and Forecast Period Length") +
   geom_smooth(method='lm', fill = NA) 
 ggsave("results/civ5_kurt_period.png", width = 10, height = 6)
 
@@ -247,36 +284,324 @@ t + geom_point() + theme_stata() +
   geom_smooth(method='lm', fill = NA) 
 ggsave("results/civ5_range_period.png", width = 10, height = 6)
 
+lmodel <- lm(range ~ forecast_period, data = scoring)
+summary(lmodel)
+
+
+p <- ggplot(civ5_scores, aes(x=bins)) 
+
+p + geom_histogram(binwidth=1) + theme_stata() + 
+  xlab("Number of Bins") + ylab("Number of Questions")  +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Distribution of Bins") 
+ggsave("results/civ5_bins.png", width = 10, height = 6)
+
+
+bins_period <- ggplot(civ5_scores, aes(forecast_period, bins)) 
+
+bins_period + geom_jitter() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Number of bins per question") + ylim(0,10) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Accuracy and Number of Bins") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_bins_period.png", width = 10, height = 6)
+
+
 ```
 
 
 ```{r naive calibration}
 
-scoring <-  unnest_wider(scoring,groundtruth_prob)
+colnames(scoring)[22] <- "kurt"
+colnames(scoring)[23] <- "skew"
+colnames(scoring)[24] <- "range"
 
-colnames(scoring) <- c("team", "problem_set", "problem", "counterfactual", "forecast_period", "fcast_bin1", "fcast_bin2", "fcast_bin3", "fcast_bin4", "fcast_bin5", "fcast_bin6", "fcast_bin7", "fcast_bin8", "fcast_bin9", "fcast_bin10", "truth_bin1", "truth_bin2", "truth_bin3", "truth_bin4", "truth_bin5", "truth_bin6", "truth_bin7", "truth_bin8", "truth_bin9", "truth_bin10",  "topic", "swrps_scores",  "bins", "brier_scores", "forecast_prob",'bin1prob','bin2prob','bin3prob','bin4prob','bin5prob','bin6prob','bin7prob','bin8prob','bin9prob','bin10prob',"cf_name")
-scoring$ID <- seq.int(nrow(scoring))
-scoring <- as.data.frame(scoring)
+calibration <-  unnest_wider(scoring,groundtruth_prob) # expand out the ground truths. needed for the reshaping, to line up the bins 
 
-calibration <- reshape(scoring, idvar="ID", direction="long", varying = list(fcast=c(6:15),truth=c(16:25)), v.names=c( "fcast", "truth"))
+colnames(calibration) <- c("individual", "problem_set", "problem", "counterfactual", "forecast_period", "fcast_bin1", "fcast_bin2", "fcast_bin3", "fcast_bin4", "fcast_bin5", "fcast_bin6", "fcast_bin7", "fcast_bin8", "fcast_bin9", "fcast_bin10", "truth_bin1", "truth_bin2", "truth_bin3", "truth_bin4", "truth_bin5", "truth_bin6", "truth_bin7", "truth_bin8", "truth_bin9", "truth_bin10",  "topic", "swrps_scores",  "bins", "brier_scores", "forecast_prob", 'kurt','skew', 'range', 'bin1prob','bin2prob','bin3prob','bin4prob', 'bin5prob','bin6prob' ,'bin7prob' ,'bin8prob','bin9prob', 'bin10prob',"cf_name")
+calibration$problem_id <- paste(calibration$counterfactual,calibration$problem,sep="_") # make a unique ID for each problem. problem numbers are re-used within problem sets for differetn counterfactuals, but counterfactual names are not reused. 
+calibration$ID <- seq.int(nrow(calibration)) #unique problem-individual ID. Why do i need this? 
+calibration <- as.data.frame(calibration)
+
+calibration <- calibration %>% select(individual, problem_id, ID, everything()) 
+
+calibration <- reshape(calibration, idvar="ID", direction="long", varying = list(fcast=c(8:17),truth=c(18:27)), v.names=c( "fcast", "truth")) 
+calibration <- calibration[!is.na(calibration$truth),]
+
+# Next I will find a way to randomly select rows
+
+keeps <- c("individual", "problem_id", "ID", "forecast_period", "topic", "bins", "time", "fcast", "truth")
+calibration_temp <- calibration[keeps] %>% as.data.frame()
+
+
+nrsim <- 100
+max_prob_est <- data.frame(matrix(nrow=nrsim, ncol=4)) #stores the estimates of each run
+colnames(max_prob_est) <- c("intercept", "fcast_period", "intercept_std_err", "fcast_std_err")
+for (h in 1:nrsim) {
+  max_calibration <- data.frame(matrix(ncol=9,nrow=0))
+
+  colnames(max_calibration) <- c("individual", "problem_id", "ID", "forecast_period", "topic", "bins", "time", "fcast", "truth")
+
+  for (i in 1:656) {
+    x <- subset(calibration_temp, ID == i) # the ID variable is question-forecaster unique
+    if(x$bins[[1]]==2) {
+      x <- x %>% top_n(1, fcast)
+      if(x$fcast[[1]]==.5) {
+        x <- x %>% slice(1)
+      }
+    }
+    else {
+      y <- sample(1:x$bins[[1]], 1)
+      x <- x[ which(x$time == y),]
+    }
+    max_calibration <- rbind.fill(max_calibration,x)
+  }
+  
+  lmodel <- lm(fcast ~ forecast_period, data = max_calibration)
+  lmodel <- coef(summary(lmodel))
+  lmodel <- as.data.frame(lmodel)
+  colnames(lmodel) <- c("Estimate","std_err", "tval", "pval")
+  max_prob_est$intercept[h] <- lmodel$Estimate[[1]]
+  max_prob_est$fcast_period[h] <- lmodel$Estimate[[2]]
+  max_prob_est$intercept_std_err[h] <- lmodel$std_err[[1]]
+  max_prob_est$fcast_std_err[h] <- lmodel$std_err[[2]]
+}
+
+#calculate t values 
+
+ max_prob_est$int_tstat <- max_prob_est$intercept/max_prob_est$intercept_std_err
+ max_prob_est$per_tstat <-  max_prob_est$fcast_period/max_prob_est$fcast_std_err
+ max_prob_est$int_pval <- 1-pt(max_prob_est$int_tstat,655)
+ max_prob_est$per_pval <-  1-pt(max_prob_est$per_tstat,655)
+
+mfcast_b <- mean(max_prob_est$fcast_period)
+sefcast_b <- sd(max_prob_est$fcast_period)
+plot(density(max_prob_est$fcast_period))
+curve(dnorm(x, mfcast_b, sefcast_b), col="red", add=TRUE)
+legend("topright", legend=c("true", "simulated"), 
+       lty=1, col=c("red", "black"))
+
+ggplot(max_prob_est, aes(x=fcast_period)) + theme_stata() +
+  geom_histogram(aes(y = ..density..), position = "identity",
+                 colour="black", fill="white", cex = 0.8) +
+  geom_density(fill="grey",cex = 0.8, alpha = 0.5) +
+  ylab("Density") + 
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Historgram of Coefficients (forecast_period)") 
+ggsave("results/civ5_rand_prob_density.png", width = 10, height = 6)
+
+
+
+```
+
+```{r same but binary}
+
+# This section does the same analysis, but also randomly draws from binary questions
+
+nrsim <- 100
+max_prob_est <- data.frame(matrix(nrow=nrsim, ncol=4)) #stores the estimates of each run
+colnames(max_prob_est) <- c("intercept", "fcast_period", "intercept_std_err", "fcast_std_err")
+for (h in 1:nrsim) {
+  max_calibration <- data.frame(matrix(ncol=9,nrow=0))
+
+  colnames(max_calibration) <- c("individual", "problem_id", "ID", "forecast_period", "topic", "bins", "time", "fcast", "truth")
+
+  for (i in 1:656) {
+    x <- subset(calibration_temp, ID == i) # the ID variable is question-forecaster unique
+      y <- sample(1:x$bins[[1]], 1)
+      x <- x[ which(x$time == y),]
+    max_calibration <- rbind.fill(max_calibration,x)
+  }
+  
+  lmodel <- lm(fcast ~ forecast_period, data = max_calibration)
+  lmodel <- coef(summary(lmodel))
+  lmodel <- as.data.frame(lmodel)
+  colnames(lmodel) <- c("Estimate","std_err", "tval", "pval")
+  max_prob_est$intercept[h] <- lmodel$Estimate[[1]]
+  max_prob_est$fcast_period[h] <- lmodel$Estimate[[2]]
+  max_prob_est$intercept_std_err[h] <- lmodel$std_err[[1]]
+  max_prob_est$fcast_std_err[h] <- lmodel$std_err[[2]]
+}
+
+#calculate t values 
+
+ max_prob_est$int_tstat <- max_prob_est$intercept/max_prob_est$intercept_std_err
+ max_prob_est$per_tstat <-  max_prob_est$fcast_period/max_prob_est$fcast_std_err
+ max_prob_est$int_pval <- 1-pt(max_prob_est$int_tstat,655)
+ max_prob_est$per_pval <-  1-pt(max_prob_est$per_tstat,655)
+
+mfcast_b <- mean(max_prob_est$fcast_period)
+sefcast_b <- sd(max_prob_est$fcast_period)
+plot(density(max_prob_est$fcast_period))
+curve(dnorm(x, mfcast_b, sefcast_b), col="red", add=TRUE)
+legend("topright", legend=c("true", "simulated"), 
+       lty=1, col=c("red", "black"))
+```
+
+```{r selecting maximum}
+#Instead of selecting a random bin, this chunk selects the maximum bin.  
+
+  max_calibration <- data.frame(matrix(ncol=9,nrow=0))
+
+  colnames(max_calibration) <- c("individual", "problem_id", "ID", "forecast_period", "topic", "bins", "time", "fcast", "truth")
+
+  for (i in 1:656) {
+    x <- subset(calibration_temp, ID == i) # the ID variable is question-forecaster unique
+      x <- x %>% top_n(1, fcast)
+      if(x$fcast[[1]]==.5) {
+        x <- x %>% slice(1)
+      }
+    max_calibration <- rbind.fill(max_calibration,x)
+  }
+
+
+max_prob_range <- ggplot(max_calibration, aes(forecast_period, fcast)) # Graph of the maximum forecast and forecast period length
+
+max_prob_range + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Maximum Bin Probability") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Maximum and Period Length") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_max_prob_period.png", width = 10, height = 6)
+
+  lmodel <- lm(fcast ~ forecast_period, data = max_calibration)
+  summary(lmodel)
+
+
+
+```
+
+
+
+```{r making gif} 
+#Going to make a fun gif
+
+nrsim <- 20
+for (h in 1:nrsim) {
+  max_calibration <- data.frame(matrix(ncol=9,nrow=0))
+
+  colnames(max_calibration) <- c("individual", "problem_id", "ID", "forecast_period", "topic", "bins", "time", "fcast", "truth")
+
+  for (i in 1:656) {
+    x <- subset(calibration_temp, ID == i) # the ID variable is question-forecaster unique
+      y <- sample(1:x$bins[[1]], 1)
+      x <- x[ which(x$time == y),]
+    max_calibration <- rbind.fill(max_calibration,x)
+  }
+  accuracy_range <- ggplot(max_calibration, aes(forecast_period, fcast)) # Graph of the aggregated accuracy and randomly selected or maximum forecast value
+
+  accuracy_range + geom_jitter() + theme_stata() + 
+    xlab("Number of Turns in Forecast Period") + ylab("Forecasted Probability") + ylim(0,1) +
+    theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+    ggtitle("Civ5 Forecast Accuracy and Randomly Selected/Maximum Forecasted Probability") +
+    geom_smooth(method='lm', fill = NA) +  annotate("text", label = h, x = 400, y = 1, size = 10)
+  j <- h +10
+  ggsave(paste0("results/max_gif/civ5_score_max_",j,".png"), width = 10, height = 6)
+}
+
+## list file names and read in
+imgs <- list.files("results/max_gif", full.names = TRUE)
+img_list <- lapply(imgs, image_read)
+
+## join the images together
+img_joined <- image_join(img_list)
+
+## animate at 2 frames per second
+img_animated <- image_animate(img_joined, fps = 1)
+
+## save to disk
+image_write(image = img_animated,
+            path = "results/max_gif/rand_20_runs.gif")
+
+```
+
+
+
+
+```{r making another gif} 
+#Going to make a fun gif in this one, we take the larger of binary, everything else is the same (random)
+
+nrsim <- 20
+for (h in 1:nrsim) {
+  max_calibration <- data.frame(matrix(ncol=9,nrow=0))
+
+  colnames(max_calibration) <- c("individual", "problem_id", "ID", "forecast_period", "topic", "bins", "time", "fcast", "truth")
+
+  for (i in 1:656) {
+    x <- subset(calibration_temp, ID == i) # the ID variable is question-forecaster unique
+    if(x$bins[[1]]==2) {
+      x <- x %>% top_n(1, fcast)
+      if(x$fcast[[1]]==.5) {
+        x <- x %>% slice(1)
+      }
+    }
+    else {
+      y <- sample(1:x$bins[[1]], 1)
+      x <- x[ which(x$time == y),]
+    }
+    max_calibration <- rbind.fill(max_calibration,x)
+  }
+  accuracy_range <- ggplot(max_calibration, aes(forecast_period, fcast)) # Graph of the aggregated accuracy and randomly selected or maximum forecast value
+
+  accuracy_range + geom_jitter() + theme_stata() + 
+    xlab("Number of Turns in Forecast Period") + ylab("Forecasted Probability") + ylim(0,1) +
+    theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+    ggtitle("Civ5 Forecast Accuracy and Randomly Selected/Maximum Forecasted Probability") +
+    geom_smooth(method='lm', fill = NA) +  annotate("text", label = h, x = 400, y = 1, size = 10)
+  j <- h +10
+  ggsave(paste0("results/max_gif_nb/civ5_score_max_",j,".png"), width = 10, height = 6)
+}
+
+## list file names and read in
+imgs <- list.files("results/max_gif", full.names = TRUE)
+img_list <- lapply(imgs, image_read)
+
+## join the images together
+img_joined <- image_join(img_list)
+
+## animate at 2 frames per second
+img_animated <- image_animate(img_joined, fps = 1)
+
+## save to disk
+image_write(image = img_animated,
+            path = "results/max_gif/rand_20_runs.gif")
+
+```
+
+
+```{r}
+
+confidence_range <- ggplot(max_calibration, aes(forecast_period, fcast)) # Graph of the aggregated accuracy and forecast period length
+
+confidence_range + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Confidence level (max or random)") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Accuracy and Confidence") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_confidence_period.png", width = 10, height = 6)
+
+
+
+
+
+
 
 #detach(package:plyr)
 keeps <- c("forecast_period", "cf_name", "fcast", "truth")
-calibration <- calibration[keeps] %>% as.data.frame() %>% drop_na(truth)
-calibration <- calibration  %>% mutate_at(vars(3), ~replace(., is.nan(.),NA)) # some of the NAs snuck through
+naive_calibration <- calibration[keeps] %>% as.data.frame() %>% drop_na(truth)  %>% mutate_at(vars(3), ~replace(., is.nan(.),NA)) # some of the NAs snuck through
 
-calibration$fcast_dec <- (ceiling(calibration$fcast*10)/10) - .05
-calibration$truth_dec <- (ceiling(calibration$truth*10)/10) - .05
+naive_calibration$fcast_dec <- (ceiling(naive_calibration$fcast*10)/10) - .05 # the .05 just makes it look pretty for the graph.
+naive_calibration$truth_dec <- (ceiling(naive_calibration$truth*10)/10) - .05
 
 library(plyr)
-calibration$period_cent <- round_any(calibration$forecast_period, 100, f = ceiling)
+naive_calibration$period_cent <- round_any(naive_calibration$forecast_period, 100, f = ceiling)
 
 detach(package:plyr)
-calibration <- calibration %>% group_by(fcast_dec,period_cent) %>% 
+naive_calibration <- naive_calibration %>% group_by(fcast_dec,period_cent) %>% 
   summarize(truth = mean(truth, na.rm=T),
             n = n())
 
-q <- ggplot(calibration, aes(x=fcast_dec, y=truth, color = factor(period_cent), group = factor(period_cent)))
+q <- ggplot(naive_calibration, aes(x=fcast_dec, y=truth, color = factor(period_cent), group = factor(period_cent)))
 
 q + geom_point() + theme_stata() + 
   xlab("Predicted Frequency") + ylab("Realized Frequency") + ylim(0,1) + xlim(0,1) +
@@ -288,7 +613,7 @@ q + geom_point() + theme_stata() +
   geom_abline(slope=1)
 ggsave("results/civ5_calib_range.png", width = 10, height = 6)
 
-categories <- calibration %>% group_by(period_cent) %>% 
+categories <- naive_calibration %>% group_by(period_cent) %>% 
   summarize(sum = sum(n, na.rm=T)) 
 # in total 3,383 forecasts. 
 categories$prop <- categories$sum/3383
@@ -657,7 +982,7 @@ questions_responses_flute <- join(all_ps_pathwayz, forecast_period_pathwayz, by 
 
 ```{r stratego}
 
-pslist <- list()
+pslist <- list() 
 
 for(ps in 1:2) {
   filename <- paste0("Study 2/Stratego/Problem Set ", ps, "/ProblemSet", ps,"_ParticipantData.csv")
@@ -676,3 +1001,63 @@ questions_responses_stratego <- join(all_ps_stratego, forecast_period_stratego, 
 
 ```
 
+
+
+
+
+
+
+``` {r unweighted}
+
+# taking away the weights from the multipliers round 
+calc.sqrt.RPS <- function(ests.in, actual.in){
+  cumulative.ests <- vector()
+  cumulative.actual <- vector()
+  
+  for(i in 1:length(ests.in)){
+    cumulative.ests[i] <- sum(ests.in[1:i])
+    cumulative.actual[i] <- sum(actual.in[1:i])
+  }
+  
+  rps <- (1/(length(ests.in)-1))*sum((cumulative.actual-cumulative.ests)^2)
+  
+  multipliers_df <- data.frame(
+    numBins=c(2:10),
+    multipliers=c(1,1,1,1,1,1,1,1,1))
+  
+  mult=subset(multipliers_df,numBins==length(ests.in),select=multipliers)
+  
+  out=round(sqrt(as.numeric(rps*mult)),3)
+  
+  return(out)
+}
+
+
+
+
+# Re-running the bit where i calculate the scores
+for (i in 1:nrow(civ5_scores)) {
+  civ5_scores$srps_scores[[i]] <- calc.sqrt.RPS(civ5_scores$all_bins[[i]], civ5_scores$groundtruth_prob[[i]]) 
+}
+
+civ5_scores$forecast_period <- unlist(civ5_scores$forecast_period)
+civ5_scores$swrps_scores <- unlist(civ5_scores$swrps_scores)
+
+accuracy_range <- ggplot(civ5_scores, aes(forecast_period, swrps_scores)) # Graph of the aggregated accuracy and forecast period length
+
+accuracy_range + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Accuracy and Period Length") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_score_period.png", width = 10, height = 6)
+
+lmodel <- lm(swrps_scores ~ forecast_period, data = civ5_scores)
+summary(lmodel)
+
+
+```
+
+
+
+```

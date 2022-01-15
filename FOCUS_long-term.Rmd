@@ -195,7 +195,7 @@ colnames(civ5_scores) <- c("problem_set"    ,  "problem"    ,      "counterfactu
 
 for (i in all_qs) {
   x <- subset(scoring, cf_question == i) # going question by question in this loop 
-  v <- 35-(10-x$bins[[1]]) # total number of columns minus max number of bins minus actual number of bins 
+  v <- 34-(10-x$bins[[1]]) # total number of columns minus max number of bins minus actual number of bins 
   for (j in 25:v) {         # the columns with odds in them 
     u <- j-24               # starting with the first column which has odds
     x[[paste0("bin",u,"odds")]][ x[[paste0("bin",u,"odds")]] == 0] <- NA # this is a cop out because they're not really zeros, just zero odds which get ignored by the gemoetric mean function. 

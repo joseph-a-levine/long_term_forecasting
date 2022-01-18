@@ -82,6 +82,14 @@ prob = function(x) {
   x / (1 + x)
 }
 
+shannon.entropy <- function(p)
+{
+	if (min(p) < 0 || sum(p) <= 0)
+		return(NA)
+	p.norm <- p[p>0]/sum(p)
+	-sum(log2(p.norm)*p.norm)
+}
+
 ```
 
 
@@ -134,7 +142,16 @@ for (i in 1:length(scoring$groundtruth_vector)) {
 }
 
 for (i in 1:length(scoring$groundtruth_vector)) {
+  scoring$srps_scores[[i]] <- calc.sqrt.RPS(scoring$forecast_vector[[i]], scoring$groundtruth_vector[[i]]) 
+}
+
+for (i in 1:length(scoring$groundtruth_vector)) {
   scoring$brier_scores[[i]] <- calc.sqrt.brier(scoring$forecast_vector[[i]], scoring$groundtruth_vector[[i]]) 
+}
+
+
+for (i in 1:length(scoring$groundtruth_vector)) {
+  scoring$ent[[i]] <- shannon.entropy(scoring$forecast_vector[[i]]) 
 }
 
 #The scores calculated above do coordinate to what the FOCUS team included in their data files.
@@ -334,7 +351,7 @@ keeps <- c("individual", "problem_id", "ID", "forecast_period", "topic", "bins",
 calibration_temp <- calibration[keeps] %>% as.data.frame()
 
 
-nrsim <- 100
+nrsim <- 10
 max_prob_est <- data.frame(matrix(nrow=nrsim, ncol=4)) #stores the estimates of each run
 colnames(max_prob_est) <- c("intercept", "fcast_period", "intercept_std_err", "fcast_std_err")
 for (h in 1:nrsim) {
@@ -398,7 +415,7 @@ ggsave("results/civ5_rand_prob_density.png", width = 10, height = 6)
 
 # This section does the same analysis, but also randomly draws from binary questions
 
-nrsim <- 100
+nrsim <- 10
 max_prob_est <- data.frame(matrix(nrow=nrsim, ncol=4)) #stores the estimates of each run
 colnames(max_prob_est) <- c("intercept", "fcast_period", "intercept_std_err", "fcast_std_err")
 for (h in 1:nrsim) {
@@ -580,10 +597,48 @@ confidence_range + geom_point() + theme_stata() +
   geom_smooth(method='lm', fill = NA) 
 ggsave("results/civ5_confidence_period.png", width = 10, height = 6)
 
+scoring$forecast_period <- unlist(scoring$forecast_period)
+scoring$ent <- unlist(scoring$ent)
+scoring$bins <- unlist(scoring$bins)
 
+ent_8 <- scoring[ which(scoring$bins == 8), ]
 
+entropy_range <- ggplot(ent_8, aes(forecast_period, ent))
 
+entropy_range + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Entropy") + ylim(0,3) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Accuracy and Entropy (Eight bins only)") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_entropy_period_8.png", width = 10, height = 6)
 
+  lmodel <- lm(ent ~ forecast_period, data = ent_8)
+  summary(lmodel)
+
+  
+  
+entropy_range <- ggplot(scoring, aes(forecast_period, ent))
+
+entropy_range + geom_point() + theme_stata() + 
+  xlab("Number of Turns in Forecast Period") + ylab("Entropy") + ylim(0,3) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Forecast Accuracy and Entropy (all bins)") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_entropy_period_all.png", width = 10, height = 6)
+
+  lmodel <- lm(ent ~ forecast_period, data = scoring)
+  summary(lmodel)
+
+  
+
+entropy_bins <- ggplot(scoring, aes(bins, ent))
+
+entropy_bins + geom_point() + theme_stata() + 
+  xlab("Number of Bins") + ylab("Entropy") + ylim(0,3) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 Bins and Entropy") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_entropy_bins.png", width = 10, height = 6)
 
 
 #detach(package:plyr)
@@ -1040,20 +1095,42 @@ for (i in 1:nrow(civ5_scores)) {
   civ5_scores$srps_scores[[i]] <- calc.sqrt.RPS(civ5_scores$all_bins[[i]], civ5_scores$groundtruth_prob[[i]]) 
 }
 
+for (i in 1:nrow(civ5_scores)) {
+  civ5_scores$swrps_scores[[i]] <- calc.sqrt.WRPS(civ5_scores$all_bins[[i]], civ5_scores$groundtruth_prob[[i]]) 
+}
+
 civ5_scores$forecast_period <- unlist(civ5_scores$forecast_period)
 civ5_scores$swrps_scores <- unlist(civ5_scores$swrps_scores)
+civ5_scores$srps_scores <- unlist(civ5_scores$srps_scores)
 
-accuracy_range <- ggplot(civ5_scores, aes(forecast_period, swrps_scores)) # Graph of the aggregated accuracy and forecast period length
+civ5_scores$score_diff <- civ5_scores$swrps_scores-civ5_scores$srps_scores
 
-accuracy_range + geom_point() + theme_stata() + 
-  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
+bins_weight <- ggplot(civ5_scores, aes(bins, score_diff)) 
+
+bins_weight + geom_point() + theme_stata() + 
+  xlab("Number of Bins") + ylab("WRPS minus RPS") + ylim(0,1) +
   theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
-  ggtitle("Civ5 Forecast Accuracy and Period Length") +
+  ggtitle("Civ5 difference between weighted and unweighted scores") +
   geom_smooth(method='lm', fill = NA) 
-ggsave("results/civ5_score_period.png", width = 10, height = 6)
+ggsave("results/civ5_bins_score_diff.png", width = 10, height = 6)
 
-lmodel <- lm(swrps_scores ~ forecast_period, data = civ5_scores)
-summary(lmodel)
+
+
+scoring$bins <- unlist(scoring$bins)
+scoring$swrps_scores <- unlist(scoring$swrps_scores)
+scoring$srps_scores <- unlist(scoring$srps_scores)
+
+scoring$score_diff <- scoring$swrps_scores-scoring$srps_scores
+
+bins_weight <- ggplot(scoring, aes(bins, score_diff)) 
+
+bins_weight + geom_point() + theme_stata() + 
+  xlab("Number of Bins") + ylab("WRPS minus RPS") + ylim(0,1) +
+  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
+  ggtitle("Civ5 difference between weighted and unweighted scores") +
+  geom_smooth(method='lm', fill = NA) 
+ggsave("results/civ5_all_score_diff.png", width = 10, height = 6)
+
 
 
 ```

@@ -141,18 +141,15 @@ for (i in 1:length(scoring$groundtruth_vector)) {
   scoring$bins[[i]] <- length(scoring$forecast_vector[[i]])
 }
 
-for (i in 1:length(scoring$groundtruth_vector)) {
-  scoring$srps_scores[[i]] <- calc.sqrt.RPS(scoring$forecast_vector[[i]], scoring$groundtruth_vector[[i]]) 
-}
 
 for (i in 1:length(scoring$groundtruth_vector)) {
   scoring$brier_scores[[i]] <- calc.sqrt.brier(scoring$forecast_vector[[i]], scoring$groundtruth_vector[[i]]) 
 }
 
 
-for (i in 1:length(scoring$groundtruth_vector)) {
-  scoring$ent[[i]] <- shannon.entropy(scoring$forecast_vector[[i]]) 
-}
+# for (i in 1:length(scoring$groundtruth_vector)) {
+#   scoring$ent[[i]] <- shannon.entropy(scoring$forecast_vector[[i]]) 
+# }
 
 #The scores calculated above do coordinate to what the FOCUS team included in their data files.
 
@@ -269,6 +266,11 @@ accuracy_range + geom_point() + theme_stata() +
   geom_smooth(method='lm', fill = NA) 
 ggsave("results/civ5_score_period.png", width = 10, height = 6)
 
+
+colnames(scoring)[22] <- "kurt"
+colnames(scoring)[23] <- "skew"
+colnames(scoring)[24] <- "range"
+
 lmodel <- lm(swrps_scores ~ forecast_period, data = civ5_scores)
 summary(lmodel)
 
@@ -329,9 +331,9 @@ ggsave("results/civ5_bins_period.png", width = 10, height = 6)
 
 ```{r naive calibration}
 
-colnames(scoring)[22] <- "kurt"
-colnames(scoring)[23] <- "skew"
-colnames(scoring)[24] <- "range"
+# colnames(scoring)[22] <- "kurt"
+# colnames(scoring)[23] <- "skew"
+# colnames(scoring)[24] <- "range"
 
 calibration <-  unnest_wider(scoring,groundtruth_prob) # expand out the ground truths. needed for the reshaping, to line up the bins 
 
@@ -639,6 +641,9 @@ entropy_bins + geom_point() + theme_stata() +
   ggtitle("Civ5 Bins and Entropy") +
   geom_smooth(method='lm', fill = NA) 
 ggsave("results/civ5_entropy_bins.png", width = 10, height = 6)
+```
+
+```{r calibration}
 
 
 #detach(package:plyr)
@@ -711,42 +716,6 @@ ggsave("results/civ5_score_period_ps.png", width = 10, height = 6)
 ```
 
 
-The following chunk just calculates the mean of the individual scores. I'm not sure what information that gives me. 
-```{r}
-
-cols <- c('counterfactual', 'problem', 'forecast_period')
-
-scoring %>%  group_by(across(all_of(cols))) %>% group_map()
-
-
-scoring$forecast_period <- unlist(scoring$forecast_period)
-scoring$swrps_scores <- unlist(scoring$swrps_scores)
-scoring$problem <- unlist(scoring$problem)
-scoring$problem_set <- unlist(scoring$problem_set)
-scoring$counterfactual <- unlist(scoring$counterfactual)
-
-# At this point, we have to aggregate the scores. It's more proper to aggregate the probabilities than the scores but I think the OOO works out the same? Should check this. 
-
-res.by <- by(scoring$swrps_scores, list(scoring$counterfactual, scoring$problem, scoring$forecast_period), gm_mean)
-
-civ5_gmeans <- as.data.frame(res.by) %>% na.omit()
-
-colnames(civ5_gmeans) <- c("counterfactual", "problem", "forecast_period", "mean_swrps")
-
-p <- ggplot(scoring, aes(forecast_period,swrps_scores))
-
-p + geom_point() + theme_stata() + 
-  xlab("Number of Turns in Forecast Period") + ylab("Mean WRPS Score") + ylim(0,1) +
-  theme(axis.text = element_text(size = 12), axis.title = element_text(size = 14)) +
-  ggtitle("Civ5 Forecast Accuracy and Period Length") +
-  geom_smooth(method='lm', fill = NA) 
-ggsave("results/civ5_score_period_allfcasts.png", width = 10, height = 6)
-
-lmodel <- lm(swrps_scores ~ forecast_period, data = scoring)
-summary(lmodel)
-
-```
-
 
 ## Critter World
 
@@ -773,7 +742,7 @@ all_ps_cw = do.call(rbind, pslist)
 
 
 forecast_period_cw <- read.csv("Study 1/Critter World/cw_questions_extended.csv") # this is a hand-coded dataset which i made from the problem sets on 2021-12-27. CONTAINS ALL THREE StUDIES
-
+library(plyr)
 questions_responses_cw <- join(all_ps_cw, forecast_period_cw, by = c("counterfactual", "question")) # gets the data from the forecast_period and questions files. merges question to forecast. merge on "counterfactual" (string) and "problem" (int). Should encode counterfactual... but i got the punctuation right
 
 questions_responses_cw$forecast_vector <- strsplit(questions_responses_cw$forecast,split=";")

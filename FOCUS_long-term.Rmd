@@ -2,7 +2,7 @@
 title: "FOCUS_long-term"
 author: "Joseph Levine"
 date created: "2021-12-21"
-date edited: "2022-01-09"
+date edited: "2022-01-29"
 output: html_document
 ---
 
@@ -18,6 +18,9 @@ library(plyr)
 library(moments)
 library(magick)
 
+# All file paths in this code refer to Joseph's directory structure. The data are taken from the OSF repository for the FOCUS data, available here: https://osf.io/794f3/
+# The main impediment to getting this code to run on your own machine ill be file paths. 
+# The contents of that zip file were placed in the below directory.
 
 knitr::opts_knit$set(root.dir = "/Users/jable/Dropbox/Research/Forecasting/FOCUS/data")
 

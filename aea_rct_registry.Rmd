@@ -1,7 +1,8 @@
 ---
 title: "aea_rct_registry"
 author: "Joseph Levine"
-date: "3/11/2022"
+date_created: "2022-03-11"
+date_edited: "2022-09-02"
 output: html_document
 ---
 
@@ -34,6 +35,10 @@ options(scipen = 999)
 
 ```{r }
 # Load the AEA RCT data, from their website 
+#NOTE
+#NOTE 
+# THIS CHUNK REQUIRES INTERNET TO RUN, AS IT WILL DOWNLOAD A CSV AUTOMATICALLY
+
 # aea_rcts <- read.csv("raw/trials.csv") 
 aea_rcts <- read.csv('https://www.socialscienceregistry.org/site/csv')
 

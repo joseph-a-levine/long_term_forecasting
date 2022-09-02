@@ -1,0 +1,285 @@
+---
+title: "aea_rct_registry"
+author: "Joseph Levine"
+date: "3/11/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(stringr)
+library(ggplot2)
+library(ggthemes)
+library(ggrepel)
+library(tidyverse)
+library(haven)
+library(devtools)
+library(dplyr)
+library(plyr)
+library(moments)
+library(stringi)
+
+# My directory link
+knitr::opts_knit$set(root.dir = "/Users/jable/Dropbox/Research/Forecasting/registrations/data")
+
+#setwd("/Users/jable/Dropbox/Research/Forecasting/registrations/data")
+
+options(scipen = 999)
+
+```
+
+## Load AEA RCT data
+
+
+```{r }
+# Load the AEA RCT data, from their website 
+# aea_rcts <- read.csv("raw/trials.csv") 
+aea_rcts <- read.csv('https://www.socialscienceregistry.org/site/csv')
+
+
+# lots of annoying columns I won't use
+aea_rcts_future = subset(aea_rcts, select = -c(DOI.Number, Number.of.clusters, Attrition.correlated, Total.number.of.observations, Treatment.arms, Public.data, Public.data.url, Intervention.completion.date, Data.collection.completion, Data.collection.completion.date, Program.files, Program.files.url, Post.trial.documents.csv, Relevant.papers.for.csv, External.Links, Secondary.IDs) )
+
+# turn date columns into date format (og as chr)
+date_cols <-  c("Start.date","End.date","Intervention.start.date","Intervention.end.date")
+aea_rcts_future[date_cols] <- lapply(aea_rcts_future[date_cols], as.Date, origin="1899-12-30")
+
+
+
+# Create various versions of duration, from the two start and two end variables
+
+
+# Check: Is "start date" or "intervention start date" earlier? 
+
+aea_rcts_future$earl_start_date <- aea_rcts_future$Start.date - aea_rcts_future$Intervention.start.date
+
+# result: Intervention start date is never earlier than "start date"
+# Check: Intervention end date vs end date
+aea_rcts_future$earl_end_date <- as.numeric(aea_rcts_future$End.date - aea_rcts_future$Intervention.end.date)
+summary(aea_rcts_future$earl_end_date)
+
+# result: Intervention end date is never later than "end date"
+# result: so "start date" -> "intervention start date" -> "intervention end date" -> end date
+
+# longest period is "end date" - "start date"
+aea_rcts_future$max_duration <- as.numeric(aea_rcts_future$End.date - aea_rcts_future$Start.date, units="days")
+aea_rcts_future$max_duration_years <- aea_rcts_future$max_duration/365.25
+
+# Eva suggested "end date" - "intervention start date"
+aea_rcts_future$max_int_duration <- as.numeric(aea_rcts_future$End.date - aea_rcts_future$Intervention.start.date, units="days")
+aea_rcts_future$max_int_duration_years <- aea_rcts_future$max_int_duration/365.25
+
+# just intervention duration
+aea_rcts_future$int_duration <- as.numeric(aea_rcts_future$Intervention.end.date - aea_rcts_future$Intervention.start.date, units="days")
+aea_rcts_future$int_duration_years <- aea_rcts_future$int_duration/365.25
+
+summary(aea_rcts_future$max_duration)
+summary(aea_rcts_future$max_int_duration)
+summary(aea_rcts_future$int_duration)
+
+aea_rcts_future$start_year <- as.numeric(format(aea_rcts_future$Start.date, format ="%Y")) #get year, just for fun
+
+summary(aea_rcts_future$start_year)
+
+summary(aea_rcts_future$max_duration_years)
+summary(aea_rcts_future$max_int_duration_years)
+
+
+```
+
+
+
+```{r }
+
+# This is a straightforward histogram of all project durations
+
+p <- ggplot(data = aea_rcts_future, mapping = aes(x = (int_duration_years)))
+
+p + geom_histogram(bins = 50) + theme_stata() + xlab("Planned Duration (Years)") + 
+  ggtitle("Histogram of Project Durations")
+
+```
+
+
+
+
+```{r }
+
+# These are just the projects shorter than ten years
+
+aea_rcts_l10 <- aea_rcts_future %>% filter(int_duration_years <= 10) 
+
+p <- ggplot(data = aea_rcts_l10, mapping = aes(x = (int_duration_years)))
+
+p + geom_histogram(bins=50) + theme_stata() + labs(x="Planned duration (years)", title = "Histogram of Project Durations",
+                                            subtitle = "Subset of projects shorter than 10 years")
+
+
+```
+
+
+```{r }
+# These are just the projects longer than ten years
+
+aea_rcts_g10 <- aea_rcts_future %>% filter(int_duration_years >= 10) 
+
+p <- ggplot(data = aea_rcts_g10, mapping = aes(x = (int_duration_years)))
+
+p + geom_histogram(bins = 20) + theme_stata() + labs(x="Planned duration (years)", y="Count", title = "Histogram of Project Durations",
+                                            subtitle = "Subset of projects shorter than 10 years") +
+  expand_limits(x = 0, y = 0)
+
+
+```
+
+
+
+```{r }
+# Dot plot of all project durations crossed with starting year (NOT intervention start year)
+
+p <- ggplot(data=aea_rcts_future, mapping = aes(x = Start.date, y = int_duration_years))
+
+p + geom_point() + theme_stata() + xlab("Project start year") + ylab("Planned duration (years)") +
+  ggtitle("Duration of RCTs, by starting year") + 
+  geom_text_repel(data = subset(aea_rcts_future,
+                                  int_duration_years > 70),
+                    mapping = aes(label = "Chicago Heights early childhood study", label.size = 2))
+
+```
+
+
+```{r }
+
+# Dot plot of project durations crossed with start year JUST SINCE 2000
+
+aea_rcts_s2000 <- aea_rcts_future %>% filter(start_year >= 2000) 
+
+p <- ggplot(data=aea_rcts_s2000, mapping = aes(x = Start.date, y = int_duration_years))
+
+p + geom_point() + theme_stata() + 
+  labs(x="Project start year", y="Planned duration (years)", title = "Histogram of Project Durations",
+                                            subtitle = "Subset of projects beginning after 2020") +
+  geom_text_repel(data = subset(aea_rcts_future,
+                                  int_duration_years > 70),
+                    mapping = aes(label = "Chicago Heights early childhood study", label.size = 2))
+
+```
+
+
+
+
+
+
+```{r }
+# This section picks up the key
+
+# These are the keywords from the AEA data dictionary
+keywords <- c("agriculture", "crime", "violence",  "education", "electoral", "environment", "energy", "finance", "microfinance", "firms", "productivity", "gender", "governance", "health", "labor", "post-conflict", "welfare")
+
+# This creates dummy variables for each of the keywords above
+aea_rcts_future <- cbind(aea_rcts_future, sapply(keywords, function(x) as.integer(grepl(x, aea_rcts_future$Keywords))))
+aea_rcts_future$num_keywords <- rowSums(aea_rcts_future[,keywords]) # variable which counts how many of the above keywords each project uses
+
+keyword_summary <- aea_rcts_future %>% summarise_at(keywords, sum) %>% pivot_longer(keywords)
+names(keyword_summary)[1] <- "Keyword"
+names(keyword_summary)[2] <- "Count"
+keyword_summary$keyword_prop <- keyword_summary$Count/nrow(aea_rcts_future) # THis dataframe is a keyword count/proportion for all projects in the data
+
+
+# Same as above, but only for projects with durations LESS than five years
+keyword_summary_l5 <- aea_rcts_future %>% filter(int_duration_years <= 5)  %>% summarise_at(keywords, sum) %>% pivot_longer(keywords)
+names(keyword_summary_l5)[1] <- "Keyword"
+names(keyword_summary_l5)[2] <- "Count_under5years"
+keyword_summary_l5$keyword_prop_under5years <- keyword_summary_l5$Count_under5years/nrow(aea_rcts_future %>% filter(int_duration_years <= 5))
+
+
+# Same as above, but only for projects with durations GREATER than five years
+keyword_summary_g5 <- aea_rcts_future %>% filter(int_duration_years >= 5)  %>% summarise_at(keywords, sum) %>% pivot_longer(keywords)
+names(keyword_summary_g5)[1] <- "Keyword"
+names(keyword_summary_g5)[2] <- "Count_over5years"
+keyword_summary_g5$keyword_prop_over5years <- keyword_summary_g5$Count_over5years/nrow(aea_rcts_future %>% filter(int_duration_years >= 5))
+
+keyword_summary_5y <- merge(keyword_summary_l5, keyword_summary_g5,by="Keyword") # One dataframe which compares the less than and greater than five year projects
+
+```
+
+
+
+
+```{r }
+
+# Overlaid histograms for the most common tags (health, labor, education), colors are really crappy, kinda hard to interperet
+
+
+p <- ggplot() + geom_histogram(data = subset(aea_rcts_l10, subset = health == 1 ),
+             mapping = aes(x = int_duration_years, fill = "#30F800"), alpha = .6) + 
+  geom_histogram(data = subset(aea_rcts_l10, subset = labor == 1 ),
+             mapping = aes(x = int_duration_years), fill = "#FE6100", alpha = .6) + 
+  geom_histogram(data = subset(aea_rcts_l10, subset = education == 1 ),
+             mapping = aes(x = int_duration_years), fill = "#648FFF", alpha = .6) + 
+  labs(x="Planned duration (years)", title = "Histogram of Project Durations",
+                                            subtitle = "Subset of projects shorter than 10 years") +
+  scale_fill_manual(name='Keywords',
+                     breaks=c('Health', 'Labor', 'Education'), values=c('Health'='#30F800', 'Labor'='#FE6100', 'Education'='#648FFF'))  + theme_stata()
+
+
+p
+
+
+
+```
+
+
+```{r }
+
+# Same histograms as above, but not overlaid and no fancy color attempts
+
+p <- ggplot() + geom_histogram(data = subset(aea_rcts_l10, subset = health == 1 ),
+             mapping = aes(x = int_duration_years )) + 
+  labs(x="Planned duration (years)", title = "Histogram of Project Durations (Health)",
+                                            subtitle = "Subset of projects shorter than 10 years") +
+  theme_stata() + xlim(0,10) + ylim(0,400)
+
+p
+
+
+
+p <- ggplot() + geom_histogram(data = subset(aea_rcts_l10, subset = education == 1 ),
+             mapping = aes(x = int_duration_years )) + 
+  labs(x="Planned duration (years)", title = "Histogram of Project Durations (Education)",
+                                            subtitle = "Subset of projects shorter than 10 years") +
+  theme_stata()+ xlim(0,10) + ylim(0,400)
+
+p
+
+
+
+p <- ggplot() + geom_histogram(data = subset(aea_rcts_l10, subset = labor == 1 ),
+             mapping = aes(x = int_duration_years )) + 
+  labs(x="Planned duration (years)", title = "Histogram of Project Durations (Labor)",
+                                            subtitle = "Subset of projects shorter than 10 years") +
+  theme_stata() + xlim(0,10) + ylim(0,400)
+
+p
+
+
+
+
+```
+
+
+
+
+```{r }
+```
+
+
+
+
+
+
+```{r }
+
+```
+

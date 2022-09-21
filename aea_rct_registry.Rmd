@@ -243,18 +243,17 @@ p
 #Eva Vivalt's requested chart 
 
 p <- ggplot() + geom_histogram(data = subset(aea_rcts_l10, subset = health == 1 ),
-             mapping = aes(x = int_duration_years, fill = "#C0BCB5"), alpha = .6) + 
+             mapping = aes(x = int_duration_years, fill = "#648FFF"), alpha = .6) + 
   geom_histogram(data = subset(aea_rcts_l10, subset = education == 1 ),
-             mapping = aes(x = int_duration_years), fill = "#4A6C6F", alpha = .6) + 
+             mapping = aes(x = int_duration_years), fill = "#FE6100", alpha = .6) + 
   labs(x="Planned duration (years)", title = "Histogram of Project Durations",
                                             subtitle = "Subset of projects shorter than 10 years") +
   scale_fill_manual(name='Keywords',
-                     breaks=c('Health', 'Education'), values=c('Health'='#C0BCB5', 'Education'='#4A6C6F'))  + theme_stata()
-
+                     breaks=c('Health', 'Education'), values=c('Health'='#648FFF', 'Education'='#FE6100'))  + theme_stata()
 
 p
 
-
+ggsave("registry_l10.pdf")
 ```
 
 ```{r }

@@ -216,6 +216,10 @@ keyword_summary_5y <- merge(keyword_summary_l5, keyword_summary_g5,by="Keyword")
 
 # Overlaid histograms for the most common tags (health, labor, education), colors are really crappy, kinda hard to interperet
 
+aea_rcts_l10 <- cbind(aea_rcts_l10, sapply(keywords, function(x) as.integer(grepl(x, aea_rcts_l10$Keywords))))
+aea_rcts_l10$num_keywords <- rowSums(aea_rcts_l10[,keywords]) # variable which counts how many of the above keywords each project uses
+
+
 
 p <- ggplot() + geom_histogram(data = subset(aea_rcts_l10, subset = health == 1 ),
              mapping = aes(x = int_duration_years, fill = "#30F800"), alpha = .6) + 
@@ -235,6 +239,23 @@ p
 
 ```
 
+```{r }
+#Eva Vivalt's requested chart 
+
+p <- ggplot() + geom_histogram(data = subset(aea_rcts_l10, subset = health == 1 ),
+             mapping = aes(x = int_duration_years, fill = "#C0BCB5"), alpha = .6) + 
+  geom_histogram(data = subset(aea_rcts_l10, subset = education == 1 ),
+             mapping = aes(x = int_duration_years), fill = "#4A6C6F", alpha = .6) + 
+  labs(x="Planned duration (years)", title = "Histogram of Project Durations",
+                                            subtitle = "Subset of projects shorter than 10 years") +
+  scale_fill_manual(name='Keywords',
+                     breaks=c('Health', 'Education'), values=c('Health'='#C0BCB5', 'Education'='#4A6C6F'))  + theme_stata()
+
+
+p
+
+
+```
 
 ```{r }
 

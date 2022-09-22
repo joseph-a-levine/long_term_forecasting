@@ -113,7 +113,7 @@ p + geom_histogram(bins = 50) + theme_stata() + xlab("Planned Duration (Years)")
 
 # These are just the projects shorter than ten years
 
-aea_rcts_l10 <- aea_rcts_future %>% filter(int_duration_years <= 10) 
+aea_rcts_l10 <- aea_rcts_future %>% filter(max_int_duration_years <= 10) 
 
 p <- ggplot(data = aea_rcts_l10, mapping = aes(x = (int_duration_years)))
 
@@ -243,15 +243,16 @@ p
 #Eva Vivalt's requested chart 
 
 p <- ggplot() + geom_histogram(data = subset(aea_rcts_l10, subset = health == 1 ),
-             mapping = aes(x = int_duration_years, fill = "#648FFF"), alpha = .6) + 
+             mapping = aes(x = max_int_duration_years, fill = "#648FFF"), alpha = .6,boundary = 0) + 
   geom_histogram(data = subset(aea_rcts_l10, subset = education == 1 ),
-             mapping = aes(x = int_duration_years), fill = "#FE6100", alpha = .6) + 
+             mapping = aes(x = max_int_duration_years), fill = "#FE6100", alpha = .6,boundary = 0) + 
   labs(x="Planned duration (years)", title = "Histogram of Project Durations",
                                             subtitle = "Subset of projects shorter than 10 years") +
   scale_fill_manual(name='Keywords',
-                     breaks=c('Health', 'Education'), values=c('Health'='#648FFF', 'Education'='#FE6100'))  + theme_stata()
+                     breaks=c('Health', 'Education'), values=c('Health'='#648FFF', 'Education'='#FE6100'))  + theme_stata() 
 
 p
+
 
 ggsave("registry_l10.pdf")
 ```
